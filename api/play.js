@@ -10,55 +10,51 @@ module.exports = async (req, res) => {
     try {
         const response = await axios.get(url, {
             headers: { 
-                'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36' 
+                'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36',
+                'Accept-Language': 'en-US,en;q=0.9'
             }
         });
 
-        // 1. Pega o HTML e limpa as barras invertidas (Igual o App faz internamente)
-        const htmlLimpo = response.data.replace(/\\/g, '');
+        const html = response.data;
 
-        // 2. Procura por links que contenham cdn.eporner.com e .m3u8 (Igual seu if no Java)
-        // Buscamos o master.m3u8 ou .urlset conforme seu código
-        const regexCapturador = /https?:\/\/cdn\.eporner\.com\/[^"']+\.m3u8[^"']*/i;
-        const match = htmlLimpo.match(regexCapturador);
+        // 1. O Eporner esconde o link em um JSON dentro de uma tag <script>
+        // Vamos buscar qualquer link m3u8, mesmo que esteja codificado
+        const regexLinks = /https?[:][^"']+\.m3u8[^"']*/gi;
+        let matches = html.match(regexLinks) || [];
+        
+        // Limpa as barras invertidas de todos os links encontrados
+        let linksLimpos = matches.map(l => l.replace(/\\/g, ''));
 
-        if (match) {
-            let urlCapturada = match[0];
+        // 2. Filtra pelo link que contém 'cdn.eporner.com' (conforme seu App)
+        let linkFinal = linksLimpos.find(l => l.includes('cdn.eporner.com'));
 
-            // 3. LOGICA DO SEU APP (Substring e Split)
+        if (linkFinal) {
+            // 3. Aplica sua lógica de montagem do App Java
             try {
-                if (urlCapturada.includes("/hls/")) {
-                    // Pega a base até /hls/
-                    const baseUrl = urlCapturada.substring(0, urlCapturada.lastIndexOf("/hls/") + 5);
-                    
-                    // Extrai o ID
-                    const rest = urlCapturada.substring(baseUrl.length);
+                if (linkFinal.includes("/hls/")) {
+                    const baseUrl = linkFinal.substring(0, linkFinal.lastIndexOf("/hls/") + 5);
+                    const rest = linkFinal.substring(baseUrl.length);
                     const videoId = rest.split("-")[0].split(",")[0].split("/")[0];
-                    
-                    // Pega os parâmetros (?hash=...)
-                    const params = urlCapturada.includes("?") ? urlCapturada.substring(urlCapturada.indexOf("?")) : "";
-                    
-                    // Define a qualidade (Prioridade 1440p)
-                    const qualidadeAlvo = urlCapturada.includes("1440p") ? "1440p" : "1080p";
-                    
-                    // Monta a URL Final idêntica ao seu cleanUrl do Java
-                    const cleanUrl = baseUrl + videoId + "-" + qualidadeAlvo + ".mp4/index-v1-a1.m3u8" + params;
+                    const params = linkFinal.includes("?") ? linkFinal.substring(linkFinal.indexOf("?")) : "";
+                    const qualidadeAlvo = linkFinal.includes("1440p") ? "1440p" : "1080p";
 
-                    return res.json({ 
-                        link: cleanUrl,
-                        qualidade: qualidadeAlvo,
-                        sucesso: true 
-                    });
+                    const cleanUrl = baseUrl + videoId + "-" + qualidadeAlvo + ".mp4/index-v1-a1.m3u8" + params;
+                    return res.json({ link: cleanUrl, sucesso: true });
                 }
             } catch (e) {
-                // Se o split falhar, retorna a url capturada original
-                return res.json({ link: urlCapturada, sucesso: true });
+                return res.json({ link: linkFinal, sucesso: true });
             }
         }
 
-        res.status(404).json({ error: 'CDN m3u8 não encontrado no HTML' });
+        // Se não achou m3u8, vamos tentar buscar o ID do vídeo para reconstruir (Plano B)
+        const idMatch = html.match(/vid\s*:\s*["']([^"']+)["']/);
+        if (idMatch) {
+             return res.json({ error: "Link protegido. Tente outro vídeo.", id: idMatch[1] });
+        }
+
+        res.status(404).json({ error: 'Não foi possível extrair o link deste vídeo.' });
 
     } catch (error) {
-        res.status(500).json({ error: 'Erro ao acessar o Eporner' });
+        res.status(500).json({ error: 'Erro de conexão' });
     }
 };
